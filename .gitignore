@@ -18,7 +18,6 @@ Makefile.in
 autom4te.cache
 libtool
 ltmain.sh
-m4
 .stgit.*
 *.tar.gz
 *.swp

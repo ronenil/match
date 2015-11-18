@@ -49,6 +49,10 @@
 
 #include <unistd.h>
 
+#ifdef ENABLE_MATCHD_PYSH
+#include <libonp/pysh.h>
+#endif	/* ENABLE_MATCHD_PYSH */
+
 #include "if_match.h"
 #include "ieslib.h" /* ies interface */
 #include "matchd_lib.h"
@@ -218,6 +222,10 @@ int main(int argc, char **argv)
 	sigaction(SIGINT, &sig_act, NULL);
 	sigaction(SIGTERM, &sig_act, NULL);
 
+#ifdef ENABLE_MATCHD_PYSH
+	onp_pysh_init();
+#endif	/* ENABLE_MATCHD_PYSH */
+
 	while (1) {
 		MAT_LOG(DEBUG, "Waiting for message\n");
 		rc = nl_recv(nsd, &dest_addr, &buf, NULL);
@@ -237,7 +245,7 @@ int main(int argc, char **argv)
 
 		free(buf);
 	}
-	
+
 	matchd_uninit();
 
 	nl_close(nsd);
