@@ -11,6 +11,7 @@ PKG_CHECK_MODULES([LIBNL], [libnl-3.0 libnl-genl-3.0])
 PKG_CHECK_MODULES([LIBNL_3_2_22], [libnl-3.0 >= 3.2.22], [AC_DEFINE([HAVE_NLA_NEST_CANCEL], 1)], [AC_DEFINE([HAVE_NLA_NEST_CANCEL], 0)])
 PKG_CHECK_MODULES([IESAPI], [ies-api], [HAVE_IESAPI=1], [HAVE_IESAPI=0])
 PKG_CHECK_MODULES([LIBGVC], [libgvc >= 2.30.0])
+PKG_CHECK_MODULES([LONP], [libonp], [HAVE_LIBONP=1], [HAVE_LIBONP=0])
 AC_PREFIX_DEFAULT(/usr/local)
 AC_SUBST([MATCH_INTERFACE_VERSION], [AC_PACKAGE_VERSION])
 test "x$prefix" = "xNONE" && prefix=$ac_default_prefix
@@ -19,6 +20,36 @@ SBINDIR=`eval echo $sbindir`
 AC_SUBST(SBINDIR)
 SYSCONFDIR=`eval echo $sysconfdir`
 AC_SUBST(SYSCONFDIR)
+
+# libonp includes and libraries
+LIBONPINCS=
+AC_ARG_WITH(
+    [libonp-headers],
+    AS_HELP_STRING(
+        [--with-libonp-headers=FULLPATH],
+        [Path to libonp headers (default: prefix/include)]
+    ),
+    [LIBONPINCS="$withval"]
+)
+AC_SUBST(LIBONPINCS)
+LIBONPLIBS=
+AC_ARG_WITH(
+    [libonp-libraries],
+    AS_HELP_STRING(
+        [--with-libonp-libraries=FULLPATH],
+        [Path to libonp libraries (default: prefix/libs)]
+    ),
+    [LIBONPLIBS="$withval"]
+)
+AC_SUBST(LIBONPLIBS)
+
+AS_IF([test "$HAVE_LIBONP" == 0 && test "x$LIBONPINCS" == "x"],
+      [AC_MSG_ERROR([Make sure libonp is installed or provide --with-libonp-headers])])
+AS_IF([test "$HAVE_LIBONP" == 0 && test "x$LIBONPLIBS" == "x"],
+      [AC_MSG_ERROR([Make sure libonp is installed or provide --with-libonp-libraries])])
+
+AM_CONDITIONAL([DCLIBONPINCS], [test "x$LIBONPINCS" != x])
+AM_CONDITIONAL([DCLIBONPLIBS], [test "x$LIBONPLIBS" != x])
 
 IESINCS=
 AC_ARG_WITH(
@@ -76,6 +107,24 @@ if ( test "${enable_systemd}" != "no" && test -z "${path_systemunitdir}"); then
     AC_MSG_RESULT([${path_systemunitdir}])
 fi
 AC_SUBST(SYSTEMD_SYSTEMUNITDIR, [${path_systemunitdir}])
+
+dnl Embedded Python shell within matchd
+AC_ARG_ENABLE([matchd-pysh],
+    AS_HELP_STRING(
+        [--enable-matchd-pysh],
+        [Enable Python shell with IES API module (fm) within matchd]
+    ),
+    [case "${enableval}" in
+	yes) matchd_pysh=true ;;
+	no)  matchd_pysh=false ;;
+	*) AC_MSG_ERROR([bad value ${enableval} for --enable-matchd-pysh]) ;;
+    esac], [matchd_pysh=false])
+AM_CONDITIONAL([MATCHD_PYSH], [test x$matchd_pysh = xtrue])
+AM_COND_IF([MATCHD_PYSH], [
+    dnl Setup Python related variables for used in Makefile.am
+    AM_PATH_PYTHON
+    AX_PYTHON_DEVEL([>='2.7'])
+])
 
 AC_CONFIG_FILES([
 Makefile lib/Makefile man/Makefile src/Makefile tests/nl/Makefile
