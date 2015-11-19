@@ -39,6 +39,7 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <inttypes.h>
+#include <limits.h>
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -311,7 +312,7 @@ static struct nla_policy match_get_tables_policy[NET_MAT_MAX+1] = {
  *   0 on success or -EINVAL if there is a parsing error.
  */
 static int
-match_macaddr2u64(__u64 *dst, char *src)
+match_macaddr2u64(__u64 *dst, const char *src)
 {
 	int err;
 
@@ -714,14 +715,356 @@ bool is_valid_keyword(char **argv, const char **valid_keyword_list)
 	return false;
 }
 
-int get_match_arg(int argc, char **argv, bool need_value, bool need_mask_type,
-		  struct net_mat_field_ref *match, const char **valid_keyword_list)
+
+static int match_set_value_ll(struct net_mat_field_ref *match,
+			      unsigned long long value)
 {
-	char *strings, *instance, *s_fld, *has_dots;
+	if (!match)
+		return -EINVAL;
+
+	switch (match->type) {
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U8:
+		match->v.u8.mask_u8 = (__u8)value;
+		break;
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U16:
+		match->v.u16.mask_u16 = (__u16)value;
+		break;
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U32:
+		match->v.u32.mask_u32 = (__u32)value;
+		break;
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U64:
+		match->v.u64.mask_u64 = (__u64)value;
+		break;
+	case NET_MAT_FIELD_REF_ATTR_TYPE_IN6:
+	default:
+		fprintf(stderr,"Error: Invalid match attr type (%d)\n",
+			match->type);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+
+static int match_set_mask_ll(struct net_mat_field_ref *match,
+			     unsigned long long mask)
+{
+	if (!match)
+		return -EINVAL;
+
+	switch (match->type) {
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U8:
+		match->v.u8.mask_u8 = (__u8)mask;
+		break;
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U16:
+		match->v.u16.mask_u16 = (__u16)mask;
+		break;
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U32:
+		match->v.u32.mask_u32 = (__u32)mask;
+		break;
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U64:
+		match->v.u64.mask_u64 = (__u64)mask;
+		break;
+	case NET_MAT_FIELD_REF_ATTR_TYPE_IN6:
+	default:
+		fprintf(stderr,"Error: Invalid match attr type (%d)\n",
+			match->type);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+
+static int match_set_exact_mask(struct net_mat_field_ref *match)
+{
+	unsigned long long mask = ULLONG_MAX;
+
+
+	if (!match)
+		return -EINVAL;
+
+	if (match->type == NET_MAT_FIELD_REF_ATTR_TYPE_IN6) {
+		match->v.in6.mask_in6.s6_addr32[0] = (__u32)-1;
+		match->v.in6.mask_in6.s6_addr32[1] = (__u32)-1;
+		match->v.in6.mask_in6.s6_addr32[2] = (__u32)-1;
+		match->v.in6.mask_in6.s6_addr32[3] = (__u32)-1;
+
+		return 0;
+	}
+
+	return match_set_mask_ll(match, mask);
+}
+
+static __u32 field_get_attr_type(const struct net_mat_field *field)
+{
+	if (!field)
+		return NET_MAT_FIELD_REF_ATTR_TYPE_UNSPEC;
+
+	if (field->bitwidth <= 8)
+		return NET_MAT_FIELD_REF_ATTR_TYPE_U8;
+	else if (field->bitwidth <= 16)
+		return NET_MAT_FIELD_REF_ATTR_TYPE_U16;
+	else if (field->bitwidth <= 32)
+		return NET_MAT_FIELD_REF_ATTR_TYPE_U32;
+	else if (field->bitwidth <= 64)
+		return NET_MAT_FIELD_REF_ATTR_TYPE_U64;
+	else if (field->bitwidth == 128)
+		return NET_MAT_FIELD_REF_ATTR_TYPE_IN6;
+
+	/* bitwidth greater than 64 except for 128 */
+	return NET_MAT_FIELD_REF_ATTR_TYPE_UNSPEC;
+}
+
+
+static unsigned long long field_max_value(const struct net_mat_field *field)
+{
+	unsigned long long value_max;
+
+
+	if (!field)
+		return 0;
+
+	if (field->bitwidth > 64)
+		return 0;
+
+	value_max = ((1ULL << field->bitwidth) - 1);
+
+	return value_max;
+}
+
+
+static int parse_ull(const char *str, unsigned long long *val_p)
+{
+	int base = 0;
+	char *end_p = NULL;
+
+	if (!str || !val_p)
+		return -EINVAL;
+
+	errno = 0;
+        *val_p = strtoul(str, &end_p, base);
+
+	if (errno)
+		return -errno;
+
+	/* Parsing successful if entire string has been consumed */
+	if ((*str != '\0') && (end_p && (*end_p == '\0')))
+		return 0;
+
+	return -EINVAL;
+}
+
+
+static int field_parse_value(const struct net_mat_field *field,
+			     const char *str,
+			     unsigned long long *value_p)
+{
+	int err;
+	unsigned long long value;
+	unsigned long long value_max;;
+
+
+	if (!field || !str || !value_p)
+		return -EINVAL;
+
+	err = parse_ull(str, &value);
+
+	value_max = field_max_value(field);
+
+	if ((err == -ERANGE)
+	    || (!err && (! (value <= value_max)))) {
+		fprintf(stderr, "'%s' is out-of-range for %s, must be at most %llu(0x%llx)\n",
+			str, field->name, value_max, value_max);
+		return -ERANGE;
+	}
+
+	if (!err) {
+		*value_p = value;
+		return 0;
+	}
+
+	return err;
+}
+
+
+static int match_parse_value_as_number(struct net_mat_field_ref *match,
+				       const struct net_mat_field *field,
+				       const char *str)
+{
+	int err;
+	unsigned long long value;
+
+
+	err = field_parse_value(field, str, &value);
+	if (err)
+		return err;
+
+	err = match_set_value_ll(match, value);
+
+	return err;
+}
+
+static int match_parse_mask_as_number(struct net_mat_field_ref *match,
+				      const struct net_mat_field *field,
+				      const char *str)
+{
+	int err;
+	unsigned long long mask;
+
+
+	err = field_parse_value(field, str, &mask);
+	if (err)
+		return err;
+
+	err = match_set_mask_ll(match, mask);
+
+	return err;
+}
+
+
+static int match_parse_value_specific(struct net_mat_field_ref *match,
+				      const struct net_mat_field *field,
+				      const char *str)
+{
+	if (!match || !str || !field)
+		return -EINVAL;
+
+	switch (match->type) {
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U8:
+		fprintf(stderr, "'%s' is invalid u8 value for %s\n",
+			str, field->name);
+		return -EINVAL;
+		break;
+
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U16:
+		fprintf(stderr, "'%s' is invalid u16 value for %s\n",
+			str, field->name);
+		return -EINVAL;
+		break;
+
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U32:
+		if (!inet_aton(str,
+			       (struct in_addr *)&match->v.u32.value_u32)) {
+			if (strchr(str, '.')) {
+				fprintf(stderr, "'%s' is invalid IP address value for %s\n",
+					str, field->name);
+			} else {
+				fprintf(stderr, "'%s' is invalid u32 value for %s\n",
+					str, field->name);
+			}
+			return -EINVAL;
+		}
+		break;
+
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U64:
+		if (match_macaddr2u64(&match->v.u64.value_u64, str)) {
+			if (strchr(str, ':')) {
+				fprintf(stderr, "'%s' is invalid MAC address value for %s\n",
+					str, field->name);
+			} else {
+				fprintf(stderr, "'%s' is invalid u64 value for %s\n",
+					str, field->name);
+			}
+			return -EINVAL;
+		}
+		break;
+
+	case NET_MAT_FIELD_REF_ATTR_TYPE_IN6:
+		if (!inet_pton(AF_INET6, str, &match->v.in6.value_in6)) {
+			fprintf(stderr, "'%s' is invalid IPv6 address value for %s\n",
+				str, field->name);
+			return -EINVAL;
+		}
+		break;
+
+	default:
+		fprintf(stderr, "Invalid match attr type %d for %s\n",
+			match->type, field->name);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+
+static int match_parse_mask_specific(struct net_mat_field_ref *match,
+				      const struct net_mat_field *field,
+				      const char *str)
+{
+	if (!match || !str || !field)
+		return -EINVAL;
+
+	switch (match->type) {
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U8:
+		fprintf(stderr, "'%s' is invalid u8 mask for %s\n",
+			str, field->name);
+		return -EINVAL;
+		break;
+
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U16:
+		fprintf(stderr, "'%s' is invalid u16 mask for %s\n",
+			str, field->name);
+		return -EINVAL;
+		break;
+
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U32:
+		if (!inet_aton(str,
+			       (struct in_addr *)&match->v.u32.mask_u32)) {
+			if (strchr(str, '.')) {
+				fprintf(stderr, "'%s' is invalid IP address mask for %s\n",
+					str, field->name);
+			} else {
+				fprintf(stderr, "'%s' is invalid u32 mask for %s\n",
+					str, field->name);
+			}
+			return -EINVAL;
+		}
+		break;
+
+	case NET_MAT_FIELD_REF_ATTR_TYPE_U64:
+		if (match_macaddr2u64(&match->v.u64.mask_u64, str)) {
+			if (strchr(str, ':')) {
+				fprintf(stderr, "'%s' is invalid MAC address mask for %s\n",
+					str, field->name);
+			} else {
+				fprintf(stderr, "'%s' is invalid u64 mask for %s\n",
+					str, field->name);
+			}
+			return -EINVAL;
+		}
+		break;
+
+	case NET_MAT_FIELD_REF_ATTR_TYPE_IN6:
+		if (!inet_pton(AF_INET6, str, &match->v.in6.mask_in6)) {
+			fprintf(stderr, "'%s' is invalid IPv6 address mask for %s\n",
+				str, field->name);
+			return -EINVAL;
+		}
+		break;
+
+	default:
+		fprintf(stderr, "Invalid match attr type %d for %s\n",
+			match->type, field->name);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+
+
+
+
+static int get_match_arg(int argc, char **argv, bool need_value, bool need_mask_type,
+			 struct net_mat_field_ref *match, const char **valid_keyword_list)
+{
+	char *strings, *instance, *s_fld;
 	struct net_mat_hdr_node *hdr_node;
 	struct net_mat_field *field;
-	int advance = 0, err = 0;
-	__u64 mask;
+	int advance = 0;
+	int err = 0;
+
 
 	next_arg();
 	strings = *argv;
@@ -822,193 +1165,70 @@ int get_match_arg(int argc, char **argv, bool need_value, bool need_mask_type,
 		return -EINVAL;
 	}
 
-	if (field->bitwidth <= 8) {
-		match->type = NET_MAT_FIELD_REF_ATTR_TYPE_U8;
-		err = sscanf(*argv, "0x%" SCNx8 "", &match->v.u8.value_u8);
-		if (err != 1)
-			err = sscanf(*argv, "%" SCNu8 "",
-				&match->v.u8.value_u8);
-
-		if (err != 1) {
-			fprintf(stderr, "Invalid value %s, value must be 0xXX or integer\n",
-				*argv);
+	match->type = field_get_attr_type(field);
+	/*
+	 * First we try to parse value as a number
+	 */
+	err = match_parse_value_as_number(match, field, *argv);
+	if (err == -ERANGE) {
+		/*
+		 * Out-of-range error already logged during parsing
+		 */
+		return -ERANGE;
+	} else if (err) {
+		/*
+		 * Next we try specific value types (IP, MAC, IPv6) as implied by attr type
+		 */
+		err = match_parse_value_specific(match, field, *argv);
+		if (err) {
+			/*
+			 * Invalid format already logged during parsing
+			 */
 			return -EINVAL;
-		}
-	} else if (field->bitwidth <= 16) {
-		match->type = NET_MAT_FIELD_REF_ATTR_TYPE_U16;
-		err = sscanf(*argv, "0x%" SCNx16 "", &match->v.u16.value_u16);
-		if (err != 1)
-			err = sscanf(*argv, "%" SCNu16 "",
-				&match->v.u16.value_u16);
-
-		if (err != 1) {
-			fprintf(stderr, "Invalid value %s, value must be 0xXXXX or integer\n",
-				*argv);
-			return -EINVAL;
-		}
-	} else if (field->bitwidth <= 32) {
-		match->type = NET_MAT_FIELD_REF_ATTR_TYPE_U32;
-		has_dots = strtok(*argv, " ");
-		if (!has_dots) {
-			fprintf(stderr, "Invalid u32 bit value\n");
-			return -EINVAL;
-		}
-		if (strchr(has_dots, '.')) {
-			err = inet_aton(*argv,
-				(struct in_addr *)&match->v.u32.value_u32);
-			if (!err) {
-				fprintf(stderr, "Invalid value %s, looks like an IP address but is invalid.\n",
-					*argv);
-				return -EINVAL;
-			}
-		} else {
-			err = sscanf(*argv, "0x%" SCNx32 "",
-					&match->v.u32.value_u32);
-			if (err != 1)
-				err = sscanf(*argv, "%" SCNu32 "",
-						&match->v.u32.value_u32);
-			if (err != 1) {
-				fprintf(stderr, "Invalid u32 bit value %s\n",
-					*argv);
-				return -EINVAL;
-			}
-		}
-	} else if (field->bitwidth <= 64) {
-		errno = 0;
-		match->type = NET_MAT_FIELD_REF_ATTR_TYPE_U64;
-
-		if (match_macaddr2u64(&match->v.u64.value_u64, *argv)) {
-			fprintf(stderr,
-			        "Error: Invalid u64 or MAC address value (%s)\n",
-			        *argv);
-			return -EINVAL;
-		} else {
-			/* one field was parsed */
-			err = 1;
-		}
-	} else if (field->bitwidth == 128) {
-		errno = 0;
-		match->type = NET_MAT_FIELD_REF_ATTR_TYPE_IN6;
-
-		if (!inet_pton(AF_INET6, *argv, &match->v.in6.value_in6)) {
-			fprintf(stderr,
-			        "Error: Invalid IPv6 address (%s)\n",
-			        *argv);
-			return -EINVAL;
-		} else {
-			/* one field was parsed */
-			err = 1;
 		}
 	}
 	advance++;
 
 	next_arg(); /* need a mask if its not an exact match */
 
-	mask = (__u64)-1;
-	if (match->type != NET_MAT_FIELD_REF_ATTR_TYPE_IN6)
-		mask = (1ULL << field->bitwidth) - 1;
-
 	/* If end of the line is reached, or if the next value appearing on
 	 * the command line appears in the list of keywords, then a mask
 	 * value is not expected. Instead, 'exact' mask is assumed.
 	 */
 	if (*argv == NULL || is_valid_keyword(argv, valid_keyword_list)) {
-		switch (match->type) {
-		case NET_MAT_FIELD_REF_ATTR_TYPE_U8:
-			match->v.u8.mask_u8 = (__u8)mask;
-			break;
-		case NET_MAT_FIELD_REF_ATTR_TYPE_U16:
-			match->v.u16.mask_u16 = (__u16)mask;
-			break;
-		case NET_MAT_FIELD_REF_ATTR_TYPE_U32:
-			match->v.u32.mask_u32 = (__u32)mask;
-			break;
-		case NET_MAT_FIELD_REF_ATTR_TYPE_U64:
-			match->v.u64.mask_u64 = mask;
-			break;
-		case NET_MAT_FIELD_REF_ATTR_TYPE_IN6:
-			match->v.in6.mask_in6.s6_addr32[0] = (__u32)-1;
-			match->v.in6.mask_in6.s6_addr32[1] = (__u32)-1;
-			match->v.in6.mask_in6.s6_addr32[2] = (__u32)-1;
-			match->v.in6.mask_in6.s6_addr32[3] = (__u32)-1;
-			break;
-		default:
+		if (match_set_exact_mask(match)) {
 			fprintf(stderr,"Error: Invalid mask type\n");
 			return -EINVAL;
 		}
 		return advance;
 	}
 
-	switch (match->type) {
-	case NET_MAT_FIELD_REF_ATTR_TYPE_U8:
-		err = sscanf(*argv, "0x%" SCNx8 "", &match->v.u8.mask_u8);
-		if (err != 1)
-			err = sscanf(*argv, "%" SCNu8 "", &match->v.u8.mask_u8);
-		if (err != 1)
-			return -EINVAL;
-		break;
-	case NET_MAT_FIELD_REF_ATTR_TYPE_U16:
-		err = sscanf(*argv, "0x%" SCNx16 "", &match->v.u16.mask_u16);
-		if (err != 1)
-			err = sscanf(*argv, "%" SCNu16 "",
-				&match->v.u16.mask_u16);
-		if (err != 1)
-			return -EINVAL;
-		break;
-	case NET_MAT_FIELD_REF_ATTR_TYPE_U32:
-		has_dots = strtok(*argv, " ");
-		if (!has_dots) {
-			fprintf(stderr, "Invalid u32 bit value\n");
+	/*
+	 * First we try to parse mask as a number
+	 */
+	err = match_parse_mask_as_number(match, field, *argv);
+	if (err == -ERANGE) {
+		/*
+		 * Out-of-range error already logged during parsing
+		 */
+		return -ERANGE;
+	} else if (err) {
+		/*
+		 * Next we try specific mask types (IP, MAC, IPv6) as implied by attr type
+		 */
+		err = match_parse_mask_specific(match, field, *argv);
+		if (err) {
+			/*
+			 * Invalid format already logged during parsing
+			 */
 			return -EINVAL;
 		}
-		if (strchr(has_dots, '.')) {
-			err = inet_aton(*argv,
-				(struct in_addr *)&match->v.u32.mask_u32);
-			if (!err)
-				return -EINVAL;
-		} else {
-			err = sscanf(*argv, "0x%" SCNx32 "",
-					&match->v.u32.mask_u32);
-			if (err != 1)
-				err = sscanf(*argv, "%" SCNu32 "",
-					&match->v.u32.mask_u32);
-			if (err != 1)
-				return -EINVAL;
-		}
-		break;
-	case NET_MAT_FIELD_REF_ATTR_TYPE_U64:
-		errno = 0;
-
-		if (match_macaddr2u64(&match->v.u64.mask_u64, *argv)) {
-			fprintf(stderr,
-			        "Error: Invalid u64 or MAC address value (%s)\n",
-			        *argv);
-			return -EINVAL;
-		} else {
-			/* one field was parsed */
-			err = 1;
-		}
-
-		break;
-	case NET_MAT_FIELD_REF_ATTR_TYPE_IN6:
-		errno = 0;
-
-		if (!inet_pton(AF_INET6, *argv, &match->v.in6.mask_in6)) {
-			fprintf(stderr,
-			        "Error: Invalid IPv6 address (%s)\n",
-			        *argv);
-			return -EINVAL;
-		} else {
-			/* one field was parsed */
-			err = 1;
-		}
-
-		break;
 	}
-
 	advance++;
+
 	return advance;
 }
+
 
 int get_action_arg(int argc, char **argv, bool need_args,
 		   struct net_mat_action *action)
