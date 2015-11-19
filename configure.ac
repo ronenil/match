@@ -2,6 +2,8 @@ AC_INIT([match-interface], [0.0.3dev])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_AUX_DIR([build-aux])
 AM_INIT_AUTOMAKE([foreign subdir-objects])
+# workaround autoconf setting default flags which we don't want
+test ".$CFLAGS" = "." && CFLAGS=" "
 AC_PROG_CC
 LT_INIT()
 AC_SUBST([LIBTOOL_DEPS])
@@ -47,8 +49,6 @@ AS_IF([test "$HAVE_IESAPI" == 0 && test "x$IESLIBS" == "x"],
 AM_CONDITIONAL([FMIESINCS], [test "x$IESINCS" != x])
 AM_CONDITIONAL([FMIESLIBS], [test "x$IESLIBS" != x])
 
-CFLAGS="$CFLAGS -Wl,--no-as-needed"
-
 AC_ARG_ENABLE(
     [systemd],
     AC_HELP_STRING(
@@ -84,6 +84,18 @@ dist/matchd-api.pc
 dist/matchd.service
 dist/match-interface.spec])
 
+dnl Enable/disable debug build
+AC_ARG_ENABLE([debug],
+    AS_HELP_STRING(
+        [--enable-debug],
+        [Enable debugging (default: no)]),
+    [case "${enableval}" in
+        yes) debug=yes ;;
+        no)  debug=no ;;
+        *)   AC_MSG_ERROR([invalid value ${enableval} for --enable-debug]);;
+     esac], [doc=no])
+AM_CONDITIONAL([DEBUG], [test x$debug = xyes])
+
 dnl Enable/disable documentation build
 AC_ARG_ENABLE([doc],
     AS_HELP_STRING(
@@ -104,4 +116,3 @@ AS_IF([test -z "$DOXYGEN" && test x$doc = xyes],
 AC_CONFIG_FILES([doc/doxyfile doc/Makefile])
 
 AC_OUTPUT
-

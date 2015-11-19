@@ -29,12 +29,18 @@ WARNING_FLAGS_GCC = -pedantic -Wall -Wextra -Wwrite-strings -Wformat=2 \
                     -Wdeclaration-after-statement -Wmissing-prototypes \
                     -Wold-style-definition
 
-AM_CFLAGS = -std=c99 -O2 -D_GNU_SOURCE -Werror $(WARNING_FLAGS_GCC) \
+if DEBUG
+OPTFLAGS = -g3 -O0
+else
+OPTFLAGS = -g -O2
+endif
+
+AM_CFLAGS = -std=c99 $(OPTFLAGS) -D_GNU_SOURCE -Werror $(WARNING_FLAGS_GCC) \
             $(LIBNL_CFLAGS) $(LIBGVC_CFLAGS) -I$(abs_top_srcdir) \
             -I$(abs_top_srcdir)/include
 CFLAGS += $(EXTRA_CFLAGS)
 
-AM_LDFLAGS = $(LIBNL_LIBS) $(LIBGVC_LIBS)
+AM_LDFLAGS = -Wl,--no-as-needed $(LIBNL_LIBS) $(LIBGVC_LIBS)
 
 sbin_PROGRAMS = match
 match_LDADD = $(abs_top_builddir)/lib/libmatch.la
@@ -45,5 +51,5 @@ matchd_LDADD = $(abs_top_builddir)/lib/libmatch.la \
              $(abs_top_builddir)/lib/libmatchies.la \
              $(abs_top_builddir)/lib/libmatchd.la \
              $(IES_LIBS)
-matchd_CFLAGS = $(AM_CFLAGS) $(IES_CFLAGS) $(CFLAGS)
+matchd_CFLAGS = $(AM_CFLAGS) $(IES_CFLAGS)
 matchd_SOURCES = matchd.c

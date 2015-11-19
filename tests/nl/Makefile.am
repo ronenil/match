@@ -29,12 +29,18 @@ WARNING_FLAGS_GCC = -pedantic -Wall -Wextra -Wwrite-strings -Wformat=2 \
                     -Wdeclaration-after-statement -Wmissing-prototypes \
                     -Wold-style-definition
 
-AM_CFLAGS = -std=c99 -O2 -D_GNU_SOURCE -Werror $(WARNING_FLAGS_GCC) \
+if DEBUG
+OPTFLAGS = -g3 -O0
+else
+OPTFLAGS = -g -O2
+endif
+
+AM_CFLAGS = -std=c99 $(OPTFLAGS) -D_GNU_SOURCE -Werror $(WARNING_FLAGS_GCC) \
             $(LIBNL_CFLAGS) $(LIBGVC_CFLAGS) -I$(abs_top_srcdir) \
             -I$(abs_top_srcdir)/include
 CFLAGS += $(EXTRA_CFLAGS)
 
-AM_LDFLAGS = $(LIBNL_LIBS) $(LIBGVC_LIBS)
+AM_LDFLAGS = -Wl,--no-as-needed $(LIBNL_LIBS) $(LIBGVC_LIBS)
 
 
 sbin_PROGRAMS = nl_get_attr_ex
@@ -42,7 +48,7 @@ nl_get_attr_ex_LDADD = $(abs_top_builddir)/lib/libmatch.la \
              $(abs_top_builddir)/lib/libmatchies.la \
              $(abs_top_builddir)/lib/libmatchd.la \
              $(IES_LIBS)
-nl_get_attr_ex_CFLAGS = $(AM_CFLAGS) $(IES_CFLAGS) $(CFLAGS)
+nl_get_attr_ex_CFLAGS = $(AM_CFLAGS) $(IES_CFLAGS)
 nl_get_attr_ex_SOURCES = nl_get_attr_ex.c
 
 sbin_PROGRAMS += nl_set_port
@@ -50,7 +56,7 @@ nl_set_port_LDADD = $(abs_top_builddir)/lib/libmatch.la \
              $(abs_top_builddir)/lib/libmatchies.la \
              $(abs_top_builddir)/lib/libmatchd.la \
              $(IES_LIBS)
-nl_set_port_CFLAGS = $(AM_CFLAGS) $(IES_CFLAGS) $(CFLAGS)
+nl_set_port_CFLAGS = $(AM_CFLAGS) $(IES_CFLAGS)
 nl_set_port_SOURCES = nl_set_port.c
 
 sbin_PROGRAMS += nl_vxlan_encap_decap_add
@@ -58,7 +64,7 @@ nl_vxlan_encap_decap_add_LDADD = $(abs_top_builddir)/lib/libmatch.la \
              $(abs_top_builddir)/lib/libmatchies.la \
              $(abs_top_builddir)/lib/libmatchd.la \
              $(IES_LIBS)
-nl_vxlan_encap_decap_add_CFLAGS = $(AM_CFLAGS) $(IES_CFLAGS) $(CFLAGS)
+nl_vxlan_encap_decap_add_CFLAGS = $(AM_CFLAGS) $(IES_CFLAGS)
 nl_vxlan_encap_decap_add_SOURCES = nl_vxlan_encap_decap_add.c
 
 sbin_PROGRAMS += nl_vxlan_encap_decap_remove
@@ -66,7 +72,7 @@ nl_vxlan_encap_decap_remove_LDADD = $(abs_top_builddir)/lib/libmatch.la \
              $(abs_top_builddir)/lib/libmatchies.la \
              $(abs_top_builddir)/lib/libmatchd.la \
              $(IES_LIBS)
-nl_vxlan_encap_decap_remove_CFLAGS = $(AM_CFLAGS) $(IES_CFLAGS) $(CFLAGS)
+nl_vxlan_encap_decap_remove_CFLAGS = $(AM_CFLAGS) $(IES_CFLAGS)
 nl_vxlan_encap_decap_remove_SOURCES = nl_vxlan_encap_decap_remove.c
 
 
