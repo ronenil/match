@@ -109,7 +109,7 @@ static bool is_valid_keyword(char **argv, const char **valid_keyword_list);
 
 static void match_usage(void)
 {
-	printf("Usage: %s [OPTION...] COMMAND\n", progname);
+	printf("Usage: %s [OPTION...] [help] COMMAND\n", progname);
 	printf("\n");
 	printf("Options:\n");
 	printf("  -f FAMILY  netlink family\n");
@@ -120,6 +120,7 @@ static void match_usage(void)
 	printf("  --version  display Match interface version and exit\n");
 	printf("\n");
 	printf("Commands:\n");
+	printf("  help              display usage message of COMMAND and exit\n");
 	printf("  create            create a match action table\n");
 	printf("  destroy           destroy a match action table\n");
 	printf("  update            update a match action table attribute\n");
@@ -2527,6 +2528,7 @@ int main(int argc, char **argv)
 	unsigned int ifindex = 0;
 	uint32_t pid = 0;
 	int verbose = 1;
+	bool help_usage = false;
 	bool resolve_names = true;
 	int opt;
 	int args = 1;
@@ -2581,22 +2583,38 @@ int main(int argc, char **argv)
 		}
 	}
 
-	match_set_match_nl_verbose_and_streamer(verbose);
-
-	if (!pid) {
-		pid = match_pid_lookup();
-		if (!pid) {
-			fprintf(stderr, "pid lookup failed and not specified\n");
-			match_usage();
-			exit(-1);
-		}
-	}
-
-	/* argv[args] can be NULL if no CMD is provided */
-	if (!argv[args]) {
+	/*
+	 * At leas one non-option argument is expected "help" or COMMAND
+	 */
+	if (args >= argc) {
 		fprintf(stderr, "Error parsing command\n");
 		match_usage();
 		exit(-1);
+	}
+
+	if (strcmp(argv[args], "help") == 0) {
+		help_usage = true;
+		args++;
+		if (args >= argc) {
+			/*
+			 * "help" without a COMMAND is treated like "-h" option
+			 */
+			match_usage();
+			return 0;
+		}
+	}
+
+	if (!help_usage) {
+		match_set_match_nl_verbose_and_streamer(verbose);
+
+		if (!pid) {
+			pid = match_pid_lookup();
+			if (!pid) {
+				fprintf(stderr, "pid lookup failed and not specified\n");
+				match_usage();
+				exit(-1);
+			}
+		}
 	}
 
 	if (strcmp(argv[args], "get_tables") == 0) {
@@ -2613,10 +2631,6 @@ int main(int argc, char **argv)
 		cmd = NET_MAT_TABLE_CMD_GET_TABLE_GRAPH;
 	} else if (strcmp(argv[args], "get_rules") == 0) {
 		cmd = NET_MAT_TABLE_CMD_GET_RULES;
-		if (args + 1 >= argc) {
-			get_rules_usage();
-			return -1;
-		}
 	} else if (strcmp(argv[args], "set_rule") == 0) {
 		cmd = NET_MAT_TABLE_CMD_SET_RULES;
 	} else if (strcmp(argv[args], "del_rule") == 0) {
@@ -2639,6 +2653,46 @@ int main(int argc, char **argv)
 		match_usage();
 		err = -EINVAL;
 		goto out;
+	}
+
+	if (help_usage) {
+		switch (cmd) {
+		case NET_MAT_TABLE_CMD_SET_RULES:
+			set_rule_usage();
+			break;
+		case NET_MAT_TABLE_CMD_DEL_RULES:
+			del_rule_usage();
+			break;
+		case NET_MAT_TABLE_CMD_GET_RULES:
+			get_rules_usage();
+			break;
+		case NET_MAT_TABLE_CMD_CREATE_TABLE:
+			create_usage();
+			break;
+		case NET_MAT_TABLE_CMD_DESTROY_TABLE:
+			destroy_usage();
+			break;
+		case NET_MAT_TABLE_CMD_UPDATE_TABLE:
+			update_usage();
+			break;
+		case NET_MAT_PORT_CMD_GET_LPORT:
+			get_lport_usage();
+			break;
+		case NET_MAT_PORT_CMD_GET_PHYS_PORT:
+			get_phys_port_usage();
+			break;
+		case NET_MAT_PORT_CMD_GET_PORTS:
+			get_port_usage();
+			break;
+		case NET_MAT_PORT_CMD_SET_PORTS:
+			set_port_usage();
+			break;
+		default:
+			match_usage();
+			break;
+		}
+
+		return 0;
 	}
 
 	/* Get the family */
