@@ -80,14 +80,14 @@ static char LR[] = "LR";
 static char shape[] = "shape";
 static char record[] = "record";
 
-Agnode_t *graphviz_table_nodes[MAX_NODES];
-Agnode_t *graphviz_header_nodes[MAX_NODES];
+static Agnode_t *graphviz_table_nodes[MAX_NODES];
+static Agnode_t *graphviz_header_nodes[MAX_NODES];
 
-struct net_mat_tbl *tables[MAX_TABLES];
-struct net_mat_hdr *headers[MAX_HDRS];
-struct net_mat_field *header_fields[MAX_HDRS][MAX_FIELDS];
-struct net_mat_action *actions[MAX_ACTIONS];
-struct net_mat_hdr_node *graph_nodes[MAX_NODES];
+static struct net_mat_tbl *tables[MAX_TABLES];
+static struct net_mat_hdr *headers[MAX_HDRS];
+static struct net_mat_field *header_fields[MAX_HDRS][MAX_FIELDS];
+static struct net_mat_action *actions[MAX_ACTIONS];
+static struct net_mat_hdr_node *graph_nodes[MAX_NODES];
 
 char *graph_names(unsigned int uid);
 char *table_names(unsigned int uid);
