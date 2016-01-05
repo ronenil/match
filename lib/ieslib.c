@@ -2414,7 +2414,9 @@ int switch_create_TCAM_table(__u32 table_id, struct net_mat_field_ref *matches, 
 	fm_flowCondition condition = 0;
 	fm_bool has_priority = FM_DISABLED;
 	fm_bool has_count = FM_DISABLED;
+	fm_bool has_mirror = FM_DISABLED, has_sample = FM_DISABLED;
 	int i;
+
 	for (i = 0; matches && matches[i].instance; i++) {
 		switch (matches[i].instance) {
 		case HEADER_INSTANCE_ETHERNET:
@@ -2609,7 +2611,18 @@ int switch_create_TCAM_table(__u32 table_id, struct net_mat_field_ref *matches, 
 		case ACTION_COUNT:
 			has_count = FM_ENABLED;
 			break;
+		case ACTION_MIRROR:
+			has_mirror = FM_ENABLED;
+			break;
+		case ACTION_SAMPLE:
+			has_sample = FM_ENABLED;
+			break;
 		}
+	}
+
+	if (has_mirror == FM_ENABLED && has_sample == FM_ENABLED) {
+		MAT_LOG(ERR, "Error: Cannot create table with both mirror and sample actions\n");
+		return -EINVAL;
 	}
 
 #ifdef DEBUG
@@ -3055,6 +3068,190 @@ set_nsh_spi_cond(__u32 spi, __u32 mask,
 	*cond |= FM_FLOW_MATCH_L4_DEEP_INSPECTION;
 
 	return 0;
+}
+
+struct mirror_group {
+	int rate;
+	int interval;
+	int mirror_port;
+	int num_ingress_ports;
+	int ingress_ports[FM10000_NUM_PORTS];
+	int refcnt;
+};
+
+#define MAX_MIRROR_GROUPS 32
+static struct mirror_group mirror_groups[MAX_MIRROR_GROUPS];
+
+static bool
+mirror_group_is_equal(struct mirror_group *g1, struct mirror_group *g2)
+{
+	int i, j;
+
+	if (g1->rate != g2->rate)
+		return false;
+	if (g1->interval != g2->interval)
+		return false;
+	if (g1->mirror_port != g2->mirror_port)
+		return false;
+	if (g1->num_ingress_ports != g2->num_ingress_ports)
+		return false;
+
+	/* any port in g2 not in g1? */
+	for (i = 0; i < g1->num_ingress_ports; ++i) {
+		for (j = 0; j < g2->num_ingress_ports; ++j)
+			if (g1->ingress_ports[i] == g2->ingress_ports[j])
+				break;
+		if (j == g2->num_ingress_ports)
+			return false;
+	}
+
+	/* any port in g1 not in g2? */
+	for (i = 0; i < g2->num_ingress_ports; ++i) {
+		for (j = 0; j < g1->num_ingress_ports; ++j)
+			if (g2->ingress_ports[i] == g1->ingress_ports[j])
+				break;
+		if (j == g1->num_ingress_ports)
+			return false;
+	}
+
+	return true;
+}
+
+static int
+create_mirror_group(int index, struct mirror_group *group)
+{
+	fm_bool mirror_acl = FM_ENABLED;
+	fm_status err;
+	int i, rc = 0;
+
+	if (index >= MAX_MIRROR_GROUPS)
+		return -EINVAL;
+
+	err = fmCreateMirror(sw, index, group->mirror_port,
+	                     FM_MIRROR_TYPE_INGRESS);
+	if (err != FM_OK)
+		return cleanup("fmCreateMirror", err);
+
+	err = fmSetMirrorAttribute(sw, index, FM_MIRROR_ACL, &mirror_acl);
+	if (err != FM_OK) {
+		rc = cleanup("fmSetMirrorAttribute(FM_MIRROR_ACL)", err);
+		goto out;
+	}
+
+	err = fmSetMirrorAttribute(sw, index, FM_MIRROR_SAMPLE_RATE,
+	                           &group->interval);
+	if (err != FM_OK) {
+		rc = cleanup("fmSetMirrorAttribute(FM_MIRROR_SAMPLE_RATE)",
+		             err);
+		goto out;
+	}
+
+	for (i = 0; i < group->num_ingress_ports; ++i) {
+		err = fmAddMirrorPort(sw, index, group->ingress_ports[i]);
+		if (err != FM_OK) {
+			rc = cleanup("fmAddMirrorPort", err);
+			MAT_LOG(ERR, "Error: Failed to add port %d to mirror group %d\n",
+				group->ingress_ports[i], index);
+			goto out;
+		}
+	}
+
+out:
+	if (rc) {
+		err = fmDeleteMirror(sw, index);
+		if (err != FM_OK)
+			rc = cleanup("fmDeleteMirror", err);
+	}
+
+	return rc;
+}
+
+/* compute sample interval based on a rate between 1-100% of the
+ * possible sample rate. */
+static int sample_rate_to_interval(int rate)
+{
+	int x[2] = { 1, 100 };
+	int y[2] = { FM10000_MIRROR_TRIG_MAX_SAMPLE, 1 };
+	int m = y[1] - y[0] / x[1] - x[0];
+	int b = y[0] - m * x[0];
+
+	if (rate == 100)
+		return FM_MIRROR_SAMPLE_RATE_DISABLED;
+	else
+		return m * rate + b;
+}
+
+static fm_byte set_mirror_group(struct net_mat_action *action)
+{
+	struct mirror_group group;
+	int i, j;
+	fm_byte index;
+
+	memset(&group, 0, sizeof(group));
+
+	switch (action->uid) {
+	case ACTION_MIRROR:
+		group.rate = 100;
+		group.mirror_port = (int)action->args[0].v.value_u32;
+		i = 1; /* ingress ports start at index 1 */
+		break;
+	case ACTION_SAMPLE:
+		group.rate = action->args[0].v.value_u8;
+		if (group.rate < 1 || group.rate > 100) {
+			MAT_LOG(ERR, "Error: Sample rate must be between 1 and 100 inclusive\n");
+			return MAX_MIRROR_GROUPS;
+		}
+		group.mirror_port = (int)action->args[1].v.value_u32;
+		i = 2; /* ingress ports start at index 2 */
+		break;
+	default:
+		/* unsupported action */
+		return MAX_MIRROR_GROUPS;
+	}
+
+	for (; action->args[i].type; ++i) {
+		if (group.num_ingress_ports == FM10000_NUM_PORTS) {
+			MAT_LOG(ERR, "Error: too many ingress ports in %s group\n",
+			        (action->uid == ACTION_MIRROR) ? "mirror" : "sample");
+			return MAX_MIRROR_GROUPS;
+		}
+
+		group.ingress_ports[group.num_ingress_ports++] =
+				(int)action->args[i].v.value_u32;
+	}
+
+	/* make sure all the ports are unique */
+	for (i = 0; i < group.num_ingress_ports; ++i) {
+		for (j = 0; j < group.num_ingress_ports; ++j) {
+			if (group.ingress_ports[i] == group.ingress_ports[j] &&
+			    i != j)
+				break;
+		}
+	}
+
+	group.interval = sample_rate_to_interval(group.rate);
+
+	/* first see if a suitable group exists */
+	for (index = 0; index < MAX_MIRROR_GROUPS; ++index) {
+		if (mirror_group_is_equal(&mirror_groups[index], &group)) {
+			++mirror_groups[index].refcnt;
+			return index;
+		}
+	}
+
+	/* no group, try to create a new one */
+	for (index = 0; index < MAX_MIRROR_GROUPS; ++index)
+		if (!mirror_groups[index].refcnt)
+			break;
+
+	if (create_mirror_group(index, &group))
+		index = MAX_MIRROR_GROUPS;
+	else {
+		group.refcnt = 1;
+		mirror_groups[index] = group;
+	}
+
+	return index;
 }
 
 int switch_add_TCAM_rule_entry(__u32 *flowid, __u32 table_id, __u32 priority, struct net_mat_field_ref *matches, struct net_mat_action *actions)
@@ -3603,6 +3800,17 @@ int switch_add_TCAM_rule_entry(__u32 *flowid, __u32 table_id, __u32 priority, st
 #ifdef DEBUG
 			MAT_LOG(DEBUG, "%s: action FORWARD_DIRECT_TO_TE(%d, %d)\n", __func__, param.tableIndex, param.flowId);
 #endif /* DEBUG */
+			break;
+		case ACTION_MIRROR:
+		case ACTION_SAMPLE:
+			param.mirrorGrp = set_mirror_group(&actions[i]);
+			if (param.mirrorGrp < MAX_MIRROR_GROUPS)
+				act |= FM_FLOW_ACTION_MIRROR_GRP;
+			else {
+				err = -EINVAL;
+				break;
+			}
+			MAT_LOG(DEBUG, "%s: action MIRROR/SAMPLE(%u)\n", __func__, param.mirrorGrp);
 			break;
 		default:
 			MAT_LOG(ERR, "%s: unsupported action %d\n", __func__, actions[i].uid);

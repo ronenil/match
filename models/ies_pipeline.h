@@ -177,6 +177,11 @@ static char service_path_id[] = "service_path_id";
 static char service_index[] = "service_index";
 static char tunnel_encap_nsh_str[] = "tunnel_encap_nsh";
 static char tunnel_decap_nsh_str[] = "tunnel_decap_nsh";
+static char mirror_str[] = "mirror";
+static char mirror_port_str[] = "mirror_port";
+static char sample_str[] = "sample";
+static char sample_rate_str[] = "sample_rate";
+static char sample_port_str[] = "sample_port";
 
 enum ies_header_ids {
 	HEADER_ETHERNET = 1,
@@ -612,6 +617,8 @@ enum ies_pipeline_action_ids {
 	ACTION_TUNNEL_DECAP_NSH,
 	ACTION_PUSH_VLAN,
 	ACTION_POP_VLAN,
+	ACTION_MIRROR,
+	ACTION_SAMPLE,
 };
 
 static struct net_mat_action_arg set_egress_port_args[] = {
@@ -960,6 +967,38 @@ static struct net_mat_action tunnel_decap_nsh = {
 	.args = NULL,
 };
 
+static struct net_mat_action_arg action_mirror_args[] = {
+	{ .name = mirror_port_str,
+	  .type = NET_MAT_ACTION_ARG_TYPE_U32, },
+	{ .name = ingress_port,
+	  .type = NET_MAT_ACTION_ARG_TYPE_U32, },
+	{ .name = ingress_port,
+	  .type = NET_MAT_ACTION_ARG_TYPE_VARIADIC, },
+	{ .name = empty, .type = NET_MAT_ACTION_ARG_TYPE_UNSPEC, }, };
+
+static struct net_mat_action action_mirror = {
+	.name = mirror_str,
+	.uid = ACTION_MIRROR,
+	.args = action_mirror_args,
+};
+
+static struct net_mat_action_arg action_sample_args[] = {
+	{ .name = sample_rate_str,
+	  .type = NET_MAT_ACTION_ARG_TYPE_U8, },
+	{ .name = sample_port_str,
+	  .type = NET_MAT_ACTION_ARG_TYPE_U32, },
+	{ .name = ingress_port,
+	  .type = NET_MAT_ACTION_ARG_TYPE_U32, },
+	{ .name = ingress_port,
+	  .type = NET_MAT_ACTION_ARG_TYPE_VARIADIC, },
+	{ .name = empty, .type = NET_MAT_ACTION_ARG_TYPE_UNSPEC, }, };
+
+static struct net_mat_action action_sample = {
+	.name = sample_str,
+	.uid = ACTION_SAMPLE,
+	.args = action_sample_args,
+};
+
 static struct net_mat_action *my_action_list[] = {
 	&set_egress_port,
 	&drop_packet,
@@ -997,6 +1036,8 @@ static struct net_mat_action *my_action_list[] = {
 	&egress_set,
 	&tunnel_encap_nsh,
 	&tunnel_decap_nsh,
+	&action_mirror,
+	&action_sample,
 	NULL,
 };
 
@@ -1300,7 +1341,9 @@ static __u32 actions_tcam[] = {ACTION_SET_EGRESS_PORT, ACTION_ROUTE_VIA_ECMP,
 			       ACTION_FORWARD_TO_TE_A, ACTION_FORWARD_TO_TE_B,
 			       ACTION_FORWARD_DIRECT_TO_TE_A,
 			       ACTION_FORWARD_DIRECT_TO_TE_B,
-			       ACTION_COUNT, ACTION_FORWARD_VSI, 0};
+			       ACTION_COUNT, ACTION_FORWARD_VSI,
+			       ACTION_MIRROR, ACTION_SAMPLE,
+			       0};
 static __u32 actions_tunnel_engine[] = {ACTION_TUNNEL_ENCAP,
 					ACTION_TUNNEL_DECAP,
 					ACTION_SET_EGRESS_PORT,
