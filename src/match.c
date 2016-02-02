@@ -107,6 +107,8 @@ match_send_recv(int verbose, uint32_t pid, int family, uint32_t ifindex,
 
 static bool is_valid_keyword(char **argv, const char **valid_keyword_list);
 
+static unsigned long long field_max_value(const struct net_mat_field *field);
+
 static void match_usage(void)
 {
 	printf("Usage: %s [OPTION...] [help] COMMAND\n", progname);
@@ -414,9 +416,10 @@ static int match_set_mask_ll(struct net_mat_field_ref *match,
 }
 
 
-static int match_set_exact_mask(struct net_mat_field_ref *match)
+static int match_set_exact_mask(struct net_mat_field_ref *match,
+                                const struct net_mat_field *field)
 {
-	unsigned long long mask = ULLONG_MAX;
+	unsigned long long mask = field_max_value(field);
 
 
 	if (!match)
@@ -834,7 +837,7 @@ static int get_match_arg(int argc, char **argv, bool need_value, bool need_mask_
 	 * value is not expected. Instead, 'exact' mask is assumed.
 	 */
 	if (*argv == NULL || is_valid_keyword(argv, valid_keyword_list)) {
-		if (match_set_exact_mask(match)) {
+		if (match_set_exact_mask(match, field)) {
 			fprintf(stderr,"Error: Invalid mask type\n");
 			return -EINVAL;
 		}
