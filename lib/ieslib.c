@@ -1846,7 +1846,13 @@ int switch_init(bool one_vlan)
 
 	MAT_LOG(DEBUG, "set pvid for  port %d to vlan %u\n", port, vlan);
 
-	le = FM_DISABLED;
+        err = fmSetPortAttribute(sw, port, FM_PORT_PARSER, &pc);
+        if (err != FM_OK)
+                return cleanup("fmSetPortAttribute", err);
+
+        MAT_LOG(DEBUG, "set FM_PORT_PARSER for port %d to %d\n", port, pc);
+
+        le = FM_DISABLED;
 	err = fmSetPortAttribute(sw, port, FM_PORT_LEARNING, &le);
 	if (err != FM_OK)
 		return cleanup("fmSetPortAttribute", err);
